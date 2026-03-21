@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     supabase_anon_key: str
     supabase_service_role_key: str
 
+    jwt_secret_key: str = "change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
+
     app_env: str = "development"
     log_level: str = "INFO"
     cors_origins: list[str] = ["http://localhost:3000"]

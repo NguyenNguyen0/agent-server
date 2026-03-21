@@ -4,6 +4,8 @@ from supabase import AsyncClient, create_async_client
 from app.config import settings
 from app.repositories.message_repo import MessageRepository
 from app.repositories.session_repo import SessionRepository
+from app.repositories.user_repo import UserRepository
+from app.services.auth_service import AuthService
 from app.services.session_service import SessionService
 
 
@@ -27,6 +29,20 @@ async def get_message_repository(
 ) -> MessageRepository:
     """Build message repository dependency."""
     return MessageRepository(client=db)
+
+
+async def get_user_repository(
+    db: AsyncClient = Depends(get_supabase_client),  # noqa: B008
+) -> UserRepository:
+    """Build user repository dependency."""
+    return UserRepository(client=db)
+
+
+async def get_auth_service(
+    user_repo: UserRepository = Depends(get_user_repository),  # noqa: B008
+) -> AuthService:
+    """Build auth service dependency."""
+    return AuthService(user_repo=user_repo)
 
 
 async def get_session_service(
