@@ -1,7 +1,9 @@
-from fastapi import Depends
-from supabase import AsyncClient, create_async_client
+from typing import Any
 
-from app.config import settings
+from fastapi import Depends
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from app.db.mongo import get_db
 from app.repositories.message_repo import MessageRepository
 from app.repositories.session_repo import SessionRepository
 from app.repositories.user_repo import UserRepository
@@ -9,43 +11,40 @@ from app.services.auth_service import AuthService
 from app.services.session_service import SessionService
 
 
-async def get_supabase_client() -> AsyncClient:
-    """Create a Supabase async client for request-scoped dependencies."""
-    return await create_async_client(
-        settings.supabase_url,
-        settings.supabase_service_role_key,
-    )
+def get_database() -> AsyncIOMotorDatabase[dict[str, Any]]:
+    """Provide MongoDB database dependency."""
+    return get_db()
 
 
-async def get_session_repository(
-    db: AsyncClient = Depends(get_supabase_client),  # noqa: B008
+def get_session_repository(
+    db: AsyncIOMotorDatabase[dict[str, Any]] = Depends(get_database),  # noqa: B008
 ) -> SessionRepository:
     """Build session repository dependency."""
-    return SessionRepository(client=db)
+    return SessionRepository(collection=db["sessions"])
 
 
-async def get_message_repository(
-    db: AsyncClient = Depends(get_supabase_client),  # noqa: B008
+def get_message_repository(
+    db: AsyncIOMotorDatabase[dict[str, Any]] = Depends(get_database),  # noqa: B008
 ) -> MessageRepository:
     """Build message repository dependency."""
-    return MessageRepository(client=db)
+    return MessageRepository(collection=db["messages"])
 
 
-async def get_user_repository(
-    db: AsyncClient = Depends(get_supabase_client),  # noqa: B008
+def get_user_repository(
+    db: AsyncIOMotorDatabase[dict[str, Any]] = Depends(get_database),  # noqa: B008
 ) -> UserRepository:
     """Build user repository dependency."""
-    return UserRepository(client=db)
+    return UserRepository(collection=db["users"])
 
 
-async def get_auth_service(
+def get_auth_service(
     user_repo: UserRepository = Depends(get_user_repository),  # noqa: B008
 ) -> AuthService:
     """Build auth service dependency."""
     return AuthService(user_repo=user_repo)
 
 
-async def get_session_service(
+def get_session_service(
     session_repo: SessionRepository = Depends(get_session_repository),  # noqa: B008
     message_repo: MessageRepository = Depends(get_message_repository),  # noqa: B008
 ) -> SessionService:

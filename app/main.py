@@ -1,15 +1,31 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.db.mongo import close_client, get_client
 from app.exceptions import AuthError, LLMRateLimitError, SessionNotFoundError
 from app.routers.auth import router as auth_router
 from app.routers.health import router as health_router
 from app.routers.sessions import router as sessions_router
 from app.routers.users import router as users_router
 
-app = FastAPI(title="agent-server", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage MongoDB connection lifecycle."""
+    _ = app
+    if settings.app_env != "test":
+        client = get_client()
+        await client.admin.command("ping")
+    yield
+    await close_client()
+
+
+app = FastAPI(title="agent-server", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -9,9 +9,8 @@ class Settings(BaseSettings):
     groq_api_key: str
     groq_model: str = "llama-3.3-70b-versatile"
 
-    supabase_url: str
-    supabase_anon_key: str
-    supabase_service_role_key: str
+    mongodb_uri: str
+    mongodb_db_name: str = "agent_server"
 
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
@@ -25,4 +24,4 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
 
 
-settings = Settings()
+settings = Settings()  # ty:ignore[missing-argument]

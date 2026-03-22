@@ -1,48 +1,77 @@
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
 
 import pytest
+from mongomock_motor import AsyncMongoMockClient
 
 from app.repositories.session_repo import SessionRepository
 
 
 @pytest.fixture
-def session_repo_with_mocks() -> tuple[SessionRepository, MagicMock, MagicMock]:
-    client = MagicMock()
-    query = MagicMock()
-
-    client.table.return_value = query
-    query.select.return_value = query
-    query.eq.return_value = query
-    query.order.return_value = query
-    query.maybe_single.return_value = query
-    query.execute = AsyncMock(return_value=SimpleNamespace(data=[]))
-
-    repo = SessionRepository(client=client)
-    return repo, client, query
+def session_repo() -> SessionRepository:
+    client = AsyncMongoMockClient()
+    db = client["agent_server_test"]
+    return SessionRepository(collection=db["sessions"])
 
 
 @pytest.mark.asyncio
-async def test_find_by_user_returns_rows(
-    session_repo_with_mocks: tuple[SessionRepository, MagicMock, MagicMock],
+async def test_find_by_user_returns_only_owned_sessions(
+    session_repo: SessionRepository,
 ) -> None:
-    repo, _, query = session_repo_with_mocks
-    query.execute.return_value = SimpleNamespace(data=[{"id": "s1"}])
+    await session_repo.create(
+        {
+            "user_id": "user-a",
+            "title": "A",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+    await session_repo.create(
+        {
+            "user_id": "user-b",
+            "title": "B",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
 
-    result = await repo.find_by_user("user-1")
+    sessions = await session_repo.find_by_user("user-a")
 
-    assert result == [{"id": "s1"}]
-    query.eq.assert_called_with("user_id", "user-1")
+    assert len(sessions) == 1
+    assert sessions[0]["user_id"] == "user-a"
 
 
 @pytest.mark.asyncio
-async def test_find_by_user_and_id_returns_none_when_not_found(
-    session_repo_with_mocks: tuple[SessionRepository, MagicMock, MagicMock],
+async def test_find_by_user_and_id_respects_ownership(
+    session_repo: SessionRepository,
 ) -> None:
-    repo, _, query = session_repo_with_mocks
-    query.execute.return_value = SimpleNamespace(data=None)
+    created = await session_repo.create(
+        {
+            "user_id": "user-a",
+            "title": "A",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
 
-    result = await repo.find_by_user_and_id("user-1", "session-1")
+    owned = await session_repo.find_by_user_and_id("user-a", created["id"])
+    not_owned = await session_repo.find_by_user_and_id("user-b", created["id"])
 
-    assert result is None
-    assert query.eq.call_count == 2
+    assert owned is not None
+    assert not_owned is None
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_document(session_repo: SessionRepository) -> None:
+    created = await session_repo.create(
+        {
+            "user_id": "user-a",
+            "title": "A",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    await session_repo.delete(created["id"])
+    found = await session_repo.find_by_id(created["id"])
+
+    assert found is None

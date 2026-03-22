@@ -1,28 +1,22 @@
 from typing import Any, cast
 
-from supabase import AsyncClient
+from motor.motor_asyncio import AsyncIOMotorCollection
 
+from app.db.mongo import to_object_id, to_str_id
 from app.repositories.base import BaseRepository
 
 
 class SessionRepository(BaseRepository[dict[str, Any]]):
     """Repository for session persistence and ownership checks."""
 
-    def __init__(self, client: AsyncClient) -> None:
-        super().__init__(client, "sessions")
+    def __init__(self, collection: AsyncIOMotorCollection[dict[str, Any]]) -> None:
+        super().__init__(collection)
 
     async def find_by_user(self, user_id: str) -> list[dict[str, Any]]:
         """Return all sessions owned by a user."""
-        result = await (
-            self._client.table(self._table)
-            .select("*")
-            .eq("user_id", user_id)
-            .order("updated_at", desc=True)
-            .execute()
-        )
-        if result is None or result.data is None:
-            return []
-        return cast(list[dict[str, Any]], result.data)
+        cursor = self._col.find({"user_id": user_id}).sort("updated_at", -1)
+        rows = [to_str_id(doc) async for doc in cursor]
+        return cast(list[dict[str, Any]], rows)
 
     async def find_by_user_and_id(
         self,
@@ -30,14 +24,12 @@ class SessionRepository(BaseRepository[dict[str, Any]]):
         session_id: str,
     ) -> dict[str, Any] | None:
         """Return one session only when it belongs to the user."""
-        result = await (
-            self._client.table(self._table)
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("id", session_id)
-            .maybe_single()
-            .execute()
+        doc = await self._col.find_one(
+            {
+                "_id": to_object_id(session_id),
+                "user_id": user_id,
+            }
         )
-        if result is None:
+        if doc is None:
             return None
-        return cast(dict[str, Any] | None, result.data)
+        return cast(dict[str, Any], to_str_id(doc))

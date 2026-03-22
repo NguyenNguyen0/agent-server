@@ -49,3 +49,17 @@ async def test_get_history_checks_ownership_then_returns_messages(
 
     assert result == [{"id": "m1", "session_id": "s1"}]
     message_repo.find_by_session.assert_awaited_once_with("s1")
+
+
+@pytest.mark.asyncio
+async def test_delete_session_deletes_messages_then_session(
+    repos: tuple[AsyncMock, AsyncMock],
+) -> None:
+    session_repo, message_repo = repos
+    session_repo.find_by_user_and_id.return_value = {"id": "s1", "user_id": "user-a"}
+    service = SessionService(session_repo=session_repo, message_repo=message_repo)
+
+    await service.delete_session("user-a", "s1")
+
+    message_repo.delete_by_session.assert_awaited_once_with("s1")
+    session_repo.delete.assert_awaited_once_with("s1")

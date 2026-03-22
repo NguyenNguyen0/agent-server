@@ -1,36 +1,32 @@
 from typing import Any, TypeVar, cast
 
-from supabase import AsyncClient
+from motor.motor_asyncio import AsyncIOMotorCollection
+
+from app.db.mongo import to_object_id, to_str_id
 
 T = TypeVar("T")
 
 
 class BaseRepository[T]:
-    """Shared CRUD primitives for Supabase repositories."""
+    """Shared CRUD primitives for MongoDB repositories."""
 
-    def __init__(self, client: AsyncClient, table_name: str) -> None:
-        self._client = client
-        self._table = table_name
+    def __init__(self, collection: AsyncIOMotorCollection[dict[str, Any]]) -> None:
+        self._col = collection
 
     async def find_by_id(self, item_id: str) -> T | None:
-        """Fetch a single row by id."""
-        result = await (
-            self._client.table(self._table)
-            .select("*")
-            .eq("id", item_id)
-            .maybe_single()
-            .execute()
-        )
-        if result is None:
+        """Fetch one document by string id."""
+        doc = await self._col.find_one({"_id": to_object_id(item_id)})
+        if doc is None:
             return None
-        return cast(T | None, result.data)
+        return cast(T, to_str_id(doc))
 
     async def create(self, data: dict[str, Any]) -> T:
-        """Insert one row and return it."""
-        result = await self._client.table(self._table).insert(data).execute()
-        rows = cast(list[T], result.data)
-        return rows[0]
+        """Insert one document and return it."""
+        payload = dict(data)
+        result = await self._col.insert_one(payload)
+        payload["_id"] = result.inserted_id
+        return cast(T, to_str_id(payload))
 
     async def delete(self, item_id: str) -> None:
-        """Delete one row by id."""
-        await self._client.table(self._table).delete().eq("id", item_id).execute()
+        """Delete one document by string id."""
+        await self._col.delete_one({"_id": to_object_id(item_id)})
