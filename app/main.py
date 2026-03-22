@@ -9,6 +9,7 @@ from app.config import settings
 from app.db.mongo import close_client, get_client
 from app.exceptions import AuthError, LLMRateLimitError, SessionNotFoundError
 from app.routers.auth import router as auth_router
+from app.routers.chat import router as chat_router
 from app.routers.health import router as health_router
 from app.routers.sessions import router as sessions_router
 from app.routers.users import router as users_router
@@ -38,6 +39,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(sessions_router)
+app.include_router(chat_router)
 app.include_router(users_router)
 
 
