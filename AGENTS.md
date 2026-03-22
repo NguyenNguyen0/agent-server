@@ -33,8 +33,11 @@
 | `langchain` | 0.2+ | Chains, prompts, tools |
 | `langserve` | 0.2+ | Expose runnable qua HTTP |
 | `langchain-groq` | latest | Groq LLM integration |
+| `langchain-huggingface` | latest | Hugging Face Inference API embeddings |
+| `huggingface-hub` | latest | Hugging Face API auth + transport |
 | `motor` | 3.x | MongoDB async driver (thay Supabase) |
-| `pymongo` | 4.x | MongoDB sync utils, ObjectId, GridFS |
+| `pymongo` | 4.x | MongoDB sync utils, ObjectId |
+| `minio` | latest | S3-compatible object storage client (file binary) |
 | `python-jose[cryptography]` | latest | JWT encode/decode (thay Supabase Auth) |
 | `passlib[bcrypt]` | latest | Password hashing |
 | `pydantic` | v2 | Validation — KHÔNG dùng v1 |
@@ -114,7 +117,10 @@ agent-server/
 │   ├── db/
 │   │   ├── __init__.py
 │   │   ├── mongo.py            # Motor client singleton + collection getters
-│   │   └── gridfs.py           # AsyncIOMotorGridFSBucket wrapper
+│   │
+│   ├── storage/
+│   │   ├── __init__.py
+│   │   └── minio.py            # MinIO client singleton + object helpers
 │   │
 │   ├── models/                 # Pydantic schemas (request/response)
 │   │   ├── auth.py
@@ -884,7 +890,7 @@ def build_rag_graph(llm: ChatGroq, vector_service: VectorService):
 | `files` | Uploaded file metadata | `FileRepository` |
 | `chunks` | Document chunks + embedding vectors | `ChunkRepository` |
 | `mcp_servers` | MCP server configs per user | `MCPRepository` |
-| GridFS buckets | Raw file binary storage | `app/db/gridfs.py` |
+| MinIO bucket (`uploads`) | Raw file binary storage | `app/storage/minio.py` |
 
 ### 8.2 Auth — JWT tự quản lý
 
@@ -1018,6 +1024,7 @@ class ChunkRepository(BaseRepository[dict]):
         """
         MongoDB Atlas Vector Search ($vectorSearch aggregation).
         Index name: 'chunk_embedding_index' (tạo ở Atlas UI hoặc API).
+        Embedding model: BAAI/bge-base-en-v1.5 (Hugging Face Inference API, 768 dims).
         """
         pipeline = [
             {
@@ -1050,17 +1057,26 @@ class ChunkRepository(BaseRepository[dict]):
         return await self._col.count_documents({"session_id": session_id})
 ```
 
-### 8.6 GridFS cho File Storage
+### 8.6 MinIO cho File Storage
 
 ```python
-# app/db/gridfs.py
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from app.db.mongo import get_db
+# app/storage/minio.py
+from functools import lru_cache
+
+from minio import Minio
+
+from app.config import settings
 
 
-def get_gridfs_bucket(bucket_name: str = "uploads") -> AsyncIOMotorGridFSBucket:
-    """Trả về GridFS bucket cho file storage."""
-    return AsyncIOMotorGridFSBucket(get_db(), bucket_name=bucket_name)
+@lru_cache(maxsize=1)
+def get_minio_client() -> Minio:
+    """Trả về MinIO client singleton cho file binary storage."""
+    return Minio(
+        endpoint=settings.minio_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=settings.minio_secure,
+    )
 ```
 
 ### 8.7 Không gọi Motor từ Agent hay Service

@@ -20,7 +20,7 @@
 │             ▼                                               │
 │  Chat Agent (LangGraph)                                     │
 │    ├── Context: uploaded files (MongoDB Atlas Vector Search) │
-│    ├── File binary: GridFS                                   │
+│    ├── File binary: MinIO (S3-compatible object storage)     │
 │    ├── Tools: MCP over HTTP (per-user config)               │
 │    └── Tools: Web Search (built-in, optional)               │
 │             │                                               │
@@ -94,7 +94,7 @@ Tạo Vector Search index trên collection `chunks` tại **Atlas UI > Search > 
     {
       "type": "vector",
       "path": "embedding",
-      "numDimensions": 384,
+            "numDimensions": 768,
       "similarity": "cosine"
     },
     {
@@ -106,7 +106,8 @@ Tạo Vector Search index trên collection `chunks` tại **Atlas UI > Search > 
 ```
 
 > **Index name:** `chunk_embedding_index` (phải khớp với tên trong `ChunkRepository.vector_search()`).
-> **numDimensions:** 384 nếu dùng `sentence-transformers/all-MiniLM-L6-v2`, 1536 nếu dùng OpenAI.
+> **Embedding model:** `BAAI/bge-base-en-v1.5` (Hugging Face Inference API).
+> **numDimensions:** `768`.
 
 ---
 
@@ -149,6 +150,17 @@ class Settings(BaseSettings):
     mongodb_uri: str                          # mongodb+srv://... hoặc mongodb://localhost:27017
     mongodb_db_name: str = "agent_server"
 
+    # Hugging Face Inference API (Embeddings)
+    huggingface_api_key: str
+    hf_embedding_model: str = "BAAI/bge-base-en-v1.5"  # 768 dims
+
+    # MinIO (S3-compatible object storage)
+    minio_endpoint: str
+    minio_access_key: str
+    minio_secret_key: str
+    minio_secure: bool = False
+    minio_bucket_name: str = "uploads"
+
     # JWT
     jwt_secret: str                           # random string dài ≥ 32 chars
     jwt_algorithm: str = "HS256"
@@ -179,6 +191,17 @@ GROQ_MODEL=llama-3.3-70b-versatile
 # MongoDB
 MONGODB_URI=mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/
 MONGODB_DB_NAME=agent_server
+
+# Hugging Face Inference API
+HUGGINGFACE_API_KEY=hf_...
+HF_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
+
+# MinIO
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_SECURE=false
+MINIO_BUCKET_NAME=uploads
 
 # JWT
 JWT_SECRET=your-super-secret-key-at-least-32-chars
@@ -628,21 +651,34 @@ tests/integration/test_chat_api.py
 | `.csv`, `.json` | Đọc raw text |
 
 ```bash
-uv add pypdf python-docx langchain-text-splitters langchain-community sentence-transformers
+uv add pypdf python-docx langchain-text-splitters langchain-huggingface huggingface-hub minio
 ```
 
-### 4.2 GridFS Setup
+### 4.2 MinIO Setup
 
-**File:** `app/db/gridfs.py`
+**File:** `app/storage/minio.py`
 
 ```python
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from app.db.mongo import get_db
+from functools import lru_cache
+
+from minio import Minio
+from app.config import settings
 
 
-def get_gridfs_bucket(bucket_name: str = "uploads") -> AsyncIOMotorGridFSBucket:
-    """Trả về GridFS bucket cho binary file storage."""
-    return AsyncIOMotorGridFSBucket(get_db(), bucket_name=bucket_name)
+@lru_cache(maxsize=1)
+def get_minio_client() -> Minio:
+    """Singleton MinIO client cho binary file storage."""
+    return Minio(
+        endpoint=settings.minio_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=settings.minio_secure,
+    )
+
+
+def get_bucket_name() -> str:
+    """Bucket mặc định cho file upload binary."""
+    return settings.minio_bucket_name  # giá trị đã chốt: "uploads"
 ```
 
 ### 4.3 Embedding Setup
@@ -651,19 +687,20 @@ def get_gridfs_bucket(bucket_name: str = "uploads") -> AsyncIOMotorGridFSBucket:
 
 ```python
 from functools import lru_cache
-from langchain_community.embeddings import HuggingFaceEmbeddings
+
+from langchain_huggingface import HuggingFaceEndpointEmbeddings
+from app.config import settings
 
 
 @lru_cache(maxsize=1)
-def get_embedder() -> HuggingFaceEmbeddings:
+def get_embedder() -> HuggingFaceEndpointEmbeddings:
     """
-    Singleton HuggingFace embedding model.
-    Model: sentence-transformers/all-MiniLM-L6-v2 (384 dims, free, local).
-    Download tự động lần đầu chạy (~90MB).
+    Singleton HuggingFace API embedding client (serverless inference).
+    Model: BAAI/bge-base-en-v1.5 (768 dims).
     """
-    return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
+    return HuggingFaceEndpointEmbeddings(
+        model=settings.hf_embedding_model,
+        huggingfacehub_api_token=settings.huggingface_api_key,
     )
 ```
 
@@ -682,11 +719,14 @@ class FileService:
         """
         1. Validate: size ≤ MAX_FILE_SIZE_MB → raise FileTooLargeError
         2. Validate: mime_type trong whitelist → raise UnsupportedFileTypeError
-        3. Upload binary lên GridFS, lưu gridfs_file_id
-        4. Lưu metadata vào collection files {session_id, user_id, filename, mime_type, size_bytes, gridfs_file_id}
+        3. Upload binary lên MinIO bucket `uploads`, lưu object_key + etag
+           object_key convention: {user_id}/{session_id}/{file_id}/{filename}
+        4. Lưu metadata vào collection files
+           {session_id, user_id, filename, mime_type, size_bytes, minio_bucket, object_key, etag}
         5. Extract text từ file content (theo mime_type)
         6. Chunk text dùng RecursiveCharacterTextSplitter(chunk_size, chunk_overlap)
-        7. Embed từng chunk bằng HuggingFaceEmbeddings
+        7. Embed từng chunk bằng Hugging Face Inference API
+           model: BAAI/bge-base-en-v1.5 (768 dims)
         8. Batch insert chunks vào collection chunks {file_id, session_id, user_id, content, chunk_index, embedding}
         9. Return file metadata dict
         """
@@ -695,7 +735,7 @@ class FileService:
         """
         1. Verify ownership (file.user_id == user_id)
         2. Xoá chunks của file (ChunkRepository.delete_by_file)
-        3. Xoá GridFS binary
+        3. Xoá MinIO object theo (bucket, object_key)
         4. Xoá file metadata document
         """
 
@@ -795,10 +835,12 @@ tests/unit/services/test_file_service.py
   — _extract_text: pdf/txt/docx trả đúng text (dùng fixture files)
   — upload_file: size quá lớn → FileTooLargeError, không lưu DB
   — upload_file: mime type không hỗ trợ → UnsupportedFileTypeError
-  — upload_file: thành công → file_repo.create + chunk_repo.insert_many được gọi
+    — upload_file: thành công → minio.put_object + file_repo.create + chunk_repo.insert_many được gọi
+    — delete_file: thành công → minio.remove_object được gọi đúng bucket/object_key
 
 tests/unit/services/test_vector_service.py
   — similarity_search embed query rồi gọi chunk_repo.vector_search
+    — similarity_search dùng embedding model BAAI/bge-base-en-v1.5 (768 dims)
   — has_context: count > 0 → True, count == 0 → False
 
 tests/unit/repositories/test_chunk_repo.py
@@ -825,7 +867,7 @@ tests/fixtures/
 - [ ] Text extracted → chunked → embedded → lưu vào MongoDB chunks collection
 - [ ] Atlas Vector Search index tạo thành công
 - [ ] Chat trong session có files → tự dùng RAG
-- [ ] Delete file → xoá sạch chunks và GridFS binary
+- [ ] Delete file → xoá sạch chunks và MinIO object
 - [ ] File > MAX_FILE_SIZE_MB → `413`
 
 ---
@@ -1306,7 +1348,7 @@ Scenario: Full user journey
 | **1** | Foundation, JWT Auth, MongoDB setup | ⭐ | — |
 | **2** | Session & Message management | ⭐⭐ | Phase 1 |
 | **3** | Basic chatbot, SSE streaming | ⭐⭐ | Phase 2 |
-| **4** | File upload, RAG (GridFS + Atlas Vector Search) | ⭐⭐⭐ | Phase 3 |
+| **4** | File upload, RAG (MinIO + Atlas Vector Search) | ⭐⭐⭐ | Phase 3 |
 | **5** | MCP server management | ⭐⭐⭐⭐ | Phase 3 |
 | **6** | Web search tool + agent selection | ⭐⭐⭐ | Phase 5 |
 | **7** | Polish, production readiness | ⭐⭐ | Phase 6 |
