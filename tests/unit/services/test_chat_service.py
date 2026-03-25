@@ -31,6 +31,8 @@ async def test_chat_verifies_ownership_before_agent_call() -> None:
         session_service=session_service,
         message_repo=message_repo,
         chatbot_agent=chatbot_agent,
+        rag_agent=AsyncMock(),
+        vector_service=AsyncMock(has_context=AsyncMock(return_value=False)),
     )
 
     response = await service.chat(
@@ -63,6 +65,8 @@ async def test_chat_saves_user_and_assistant_messages() -> None:
         session_service=session_service,
         message_repo=message_repo,
         chatbot_agent=chatbot_agent,
+        rag_agent=AsyncMock(),
+        vector_service=AsyncMock(has_context=AsyncMock(return_value=False)),
     )
 
     response = await service.chat(
@@ -89,6 +93,8 @@ async def test_stream_chat_yields_sse_and_persists_full_response() -> None:
         session_service=session_service,
         message_repo=message_repo,
         chatbot_agent=chatbot_agent,
+        rag_agent=AsyncMock(),
+        vector_service=AsyncMock(has_context=AsyncMock(return_value=False)),
     )
 
     chunks = [
@@ -109,3 +115,40 @@ async def test_stream_chat_yields_sse_and_persists_full_response() -> None:
         "Hello",
         tool_calls=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_uses_rag_agent_when_context_exists() -> None:
+    session_service = AsyncMock()
+    message_repo = AsyncMock()
+    message_repo.find_by_session.return_value = []
+    message_repo.create_message.side_effect = [{"id": "m-user"}, {"id": "m-assistant"}]
+
+    chatbot_agent = AsyncMock()
+    rag_agent = AsyncMock()
+    rag_agent.ainvoke.return_value = ChatOutput(
+        content="rag reply",
+        session_id="session-1",
+        message_id="",
+        agent_type="rag",
+    )
+    vector_service = AsyncMock()
+    vector_service.has_context.return_value = True
+
+    service = ChatService(
+        session_service=session_service,
+        message_repo=message_repo,
+        chatbot_agent=chatbot_agent,
+        rag_agent=rag_agent,
+        vector_service=vector_service,
+    )
+
+    response = await service.chat(
+        user_id="user-1",
+        session_id="session-1",
+        request=ChatRequest(message="hello"),
+    )
+
+    assert response.content == "rag reply"
+    rag_agent.ainvoke.assert_awaited_once()
+    chatbot_agent.ainvoke.assert_not_called()

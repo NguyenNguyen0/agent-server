@@ -6,9 +6,11 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from app.agents.chatbot_agent import ChatbotAgent
+from app.agents.rag_agent import RagAgent
 from app.models.chat import ChatInput, ChatRequest, ChatResponse
 from app.repositories.message_repo import MessageRepository
 from app.services.session_service import SessionService
+from app.services.vector_service import VectorService
 
 
 class ChatService:
@@ -19,10 +21,19 @@ class ChatService:
         session_service: SessionService,
         message_repo: MessageRepository,
         chatbot_agent: ChatbotAgent,
+        rag_agent: RagAgent,
+        vector_service: VectorService,
     ) -> None:
         self._session_service = session_service
         self._message_repo = message_repo
         self._chatbot_agent = chatbot_agent
+        self._rag_agent = rag_agent
+        self._vector_service = vector_service
+
+    async def _select_agent(self, session_id: str) -> ChatbotAgent | RagAgent:
+        """Select RAG agent when session has uploaded file context."""
+        has_context = await self._vector_service.has_context(session_id)
+        return self._rag_agent if has_context else self._chatbot_agent
 
     def _to_langchain_history(self, rows: list[dict[str, Any]]) -> list[BaseMessage]:
         """Convert persisted message rows into LangChain message objects."""
@@ -47,6 +58,7 @@ class ChatService:
 
         rows = await self._message_repo.find_by_session(session_id)
         history = self._to_langchain_history(rows)
+        agent = await self._select_agent(session_id)
 
         await self._message_repo.create_message(
             session_id,
@@ -54,7 +66,7 @@ class ChatService:
             request.message,
             tool_calls=None,
         )
-        output = await self._chatbot_agent.ainvoke(
+        output = await agent.ainvoke(
             ChatInput(message=request.message, session_id=session_id, history=history)
         )
         assistant = await self._message_repo.create_message(
@@ -81,6 +93,7 @@ class ChatService:
 
         rows = await self._message_repo.find_by_session(session_id)
         history = self._to_langchain_history(rows)
+        agent = await self._select_agent(session_id)
 
         await self._message_repo.create_message(
             session_id,
@@ -90,7 +103,7 @@ class ChatService:
         )
 
         chunks: list[str] = []
-        stream = self._chatbot_agent.astream(
+        stream = agent.astream(
             ChatInput(message=request.message, session_id=session_id, history=history)
         )
         if inspect.isawaitable(stream):
