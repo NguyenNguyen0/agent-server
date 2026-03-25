@@ -6,9 +6,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.chatbot_agent import ChatbotAgent
 from app.agents.rag_agent import RagAgent
 from app.db.mongo import get_db
+from app.db.qdrant import get_client as get_qdrant_client
 from app.repositories.chunk_repo import ChunkRepository
 from app.repositories.file_repo import FileRepository
 from app.repositories.message_repo import MessageRepository
+from app.repositories.qdrant_repo import QdrantRepository
 from app.repositories.session_repo import SessionRepository
 from app.repositories.user_repo import UserRepository
 from app.services.auth_service import AuthService
@@ -61,6 +63,11 @@ def get_chunk_repository(
     return ChunkRepository(collection=db["chunks"])
 
 
+def get_qdrant_repository() -> QdrantRepository:
+    """Build Qdrant vector repository dependency."""
+    return QdrantRepository(client=get_qdrant_client())
+
+
 def get_auth_service(
     user_repo: UserRepository = Depends(get_user_repository),  # noqa: B008
 ) -> AuthService:
@@ -75,9 +82,14 @@ def get_chatbot_agent() -> ChatbotAgent:
 
 def get_vector_service(
     chunk_repo: ChunkRepository = Depends(get_chunk_repository),  # noqa: B008
+    qdrant_repo: QdrantRepository = Depends(get_qdrant_repository),  # noqa: B008
 ) -> VectorService:
     """Build vector service dependency."""
-    return VectorService(chunk_repo=chunk_repo, embedder=get_embedder())
+    return VectorService(
+        chunk_repo=chunk_repo,
+        qdrant_repo=qdrant_repo,
+        embedder=get_embedder(),
+    )
 
 
 def get_rag_agent(
@@ -116,6 +128,7 @@ def get_file_service(
     session_service: SessionService = Depends(get_session_service),  # noqa: B008
     file_repo: FileRepository = Depends(get_file_repository),  # noqa: B008
     chunk_repo: ChunkRepository = Depends(get_chunk_repository),  # noqa: B008
+    vector_service: VectorService = Depends(get_vector_service),  # noqa: B008
 ) -> FileService:
     """Build file service dependency."""
     minio_client = get_minio_client()
@@ -126,6 +139,7 @@ def get_file_service(
         session_service=session_service,
         file_repo=file_repo,
         chunk_repo=chunk_repo,
+        vector_service=vector_service,
         embedder=get_embedder(),
         minio_client=minio_client,
         bucket_name=bucket_name,

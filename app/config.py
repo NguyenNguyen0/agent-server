@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     mongodb_uri: str
     mongodb_db_name: str = "agent_server"
 
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""
+    qdrant_collection_name: str = "agent_server_chunks"
+    qdrant_vector_size: int = 768
+
     huggingface_api_key: str = ""
     hf_embedding_model: str = "BAAI/bge-base-en-v1.5"
 

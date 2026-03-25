@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db.mongo import close_client, get_client
+from app.db.qdrant import close_client as close_qdrant_client
+from app.db.qdrant import get_client as get_qdrant_client
 from app.exceptions import AuthError, LLMRateLimitError, SessionNotFoundError
 from app.routers.auth import router as auth_router
 from app.routers.chat import router as chat_router
@@ -23,8 +25,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.app_env != "test":
         client = get_client()
         await client.admin.command("ping")
+        qdrant_client = get_qdrant_client()
+        await qdrant_client.get_collections()
     yield
     await close_client()
+    await close_qdrant_client()
 
 
 app = FastAPI(title="agent-server", version="0.1.0", lifespan=lifespan)

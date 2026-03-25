@@ -12,6 +12,7 @@ async def test_upload_file_rejects_size_above_5mb_without_saving_metadata() -> N
     file_repo = AsyncMock()
     file_repo.count_by_session.return_value = 0
     chunk_repo = AsyncMock()
+    vector_service = AsyncMock()
     minio_client = MagicMock()
 
     content = b"a" * (5 * 1024 * 1024 + 1)
@@ -25,6 +26,7 @@ async def test_upload_file_rejects_size_above_5mb_without_saving_metadata() -> N
         session_service=session_service,
         file_repo=file_repo,
         chunk_repo=chunk_repo,
+        vector_service=vector_service,
         embedder=AsyncMock(),
         minio_client=minio_client,
         bucket_name="uploads",
@@ -48,6 +50,7 @@ async def test_upload_file_rejects_when_session_has_more_than_4_files() -> None:
         session_service=session_service,
         file_repo=file_repo,
         chunk_repo=AsyncMock(),
+        vector_service=AsyncMock(),
         embedder=AsyncMock(),
         minio_client=MagicMock(),
         bucket_name="uploads",
@@ -74,6 +77,7 @@ async def test_upload_file_rejects_unsupported_type_without_saving_metadata() ->
         session_service=AsyncMock(),
         file_repo=file_repo,
         chunk_repo=AsyncMock(),
+        vector_service=AsyncMock(),
         embedder=AsyncMock(),
         minio_client=MagicMock(),
         bucket_name="uploads",
@@ -108,6 +112,7 @@ async def test_upload_file_success_calls_minio_and_persists_chunks() -> None:
     }
 
     chunk_repo = AsyncMock()
+    vector_service = AsyncMock()
     embedder = AsyncMock()
     embedder.aembed_documents.return_value = [[0.1, 0.2]]
 
@@ -118,6 +123,7 @@ async def test_upload_file_success_calls_minio_and_persists_chunks() -> None:
         session_service=AsyncMock(),
         file_repo=file_repo,
         chunk_repo=chunk_repo,
+        vector_service=vector_service,
         embedder=embedder,
         minio_client=minio_client,
         bucket_name="uploads",
@@ -134,6 +140,7 @@ async def test_upload_file_success_calls_minio_and_persists_chunks() -> None:
     assert result["id"] == "file-1"
     minio_client.put_object.assert_called_once()
     chunk_repo.insert_many.assert_awaited_once()
+    vector_service.index_chunks.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -148,6 +155,7 @@ async def test_upload_file_raises_when_embedding_fails_and_no_metadata_saved() -
         session_service=AsyncMock(),
         file_repo=file_repo,
         chunk_repo=AsyncMock(),
+        vector_service=AsyncMock(),
         embedder=embedder,
         minio_client=MagicMock(),
         bucket_name="uploads",
@@ -166,6 +174,55 @@ async def test_upload_file_raises_when_embedding_fails_and_no_metadata_saved() -
 
 
 @pytest.mark.asyncio
+async def test_upload_file_rolls_back_chunks_when_vector_indexing_fails() -> None:
+    file_repo = AsyncMock()
+    file_repo.count_by_session.return_value = 0
+    file_repo.create.return_value = {
+        "id": "file-1",
+        "session_id": "s1",
+        "user_id": "u1",
+        "filename": "sample.txt",
+        "mime_type": "text/plain",
+        "size_bytes": 11,
+        "minio_bucket": "uploads",
+        "object_key": "u1/s1/sample.txt",
+        "etag": "etag-1",
+    }
+
+    chunk_repo = AsyncMock()
+    vector_service = AsyncMock()
+    vector_service.index_chunks.side_effect = RuntimeError("qdrant down")
+    embedder = AsyncMock()
+    embedder.aembed_documents.return_value = [[0.1, 0.2]]
+
+    minio_client = MagicMock()
+    minio_client.put_object.return_value = SimpleNamespace(etag="etag-1")
+
+    service = FileService(
+        session_service=AsyncMock(),
+        file_repo=file_repo,
+        chunk_repo=chunk_repo,
+        vector_service=vector_service,
+        embedder=embedder,
+        minio_client=minio_client,
+        bucket_name="uploads",
+    )
+
+    upload = SimpleNamespace(
+        filename="sample.txt",
+        content_type="text/plain",
+        read=AsyncMock(return_value=b"hello world"),
+    )
+
+    with pytest.raises(ValueError, match="Failed to persist chunks"):
+        await service.upload_file("u1", "s1", upload)
+
+    chunk_repo.delete_by_file.assert_awaited_once_with("file-1")
+    file_repo.delete.assert_awaited_once_with("file-1")
+    minio_client.remove_object.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_delete_file_removes_chunks_then_minio_object() -> None:
     file_repo = AsyncMock()
     file_repo.find_by_user_and_id.return_value = {
@@ -177,12 +234,14 @@ async def test_delete_file_removes_chunks_then_minio_object() -> None:
     }
 
     chunk_repo = AsyncMock()
+    vector_service = AsyncMock()
     minio_client = MagicMock()
 
     service = FileService(
         session_service=AsyncMock(),
         file_repo=file_repo,
         chunk_repo=chunk_repo,
+        vector_service=vector_service,
         embedder=AsyncMock(),
         minio_client=minio_client,
         bucket_name="uploads",
@@ -190,6 +249,7 @@ async def test_delete_file_removes_chunks_then_minio_object() -> None:
 
     await service.delete_file("u1", "s1", "file-1")
 
+    vector_service.delete_file_vectors.assert_awaited_once_with("file-1")
     chunk_repo.delete_by_file.assert_awaited_once_with("file-1")
     minio_client.remove_object.assert_called_once_with(
         "uploads",
@@ -203,6 +263,7 @@ def test_extract_text_dispatches_supported_types() -> None:
         session_service=AsyncMock(),
         file_repo=AsyncMock(),
         chunk_repo=AsyncMock(),
+        vector_service=AsyncMock(),
         embedder=AsyncMock(),
         minio_client=MagicMock(),
         bucket_name="uploads",

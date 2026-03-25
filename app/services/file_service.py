@@ -13,6 +13,7 @@ from app.config import settings
 from app.repositories.chunk_repo import ChunkRepository
 from app.repositories.file_repo import FileRepository
 from app.services.session_service import SessionService
+from app.services.vector_service import VectorService
 
 SUPPORTED_EXTENSIONS: set[str] = {"txt", "md", "pdf", "docx", "csv", "json"}
 MAX_FILES_PER_SESSION = 4
@@ -34,6 +35,7 @@ class FileService:
         session_service: SessionService,
         file_repo: FileRepository,
         chunk_repo: ChunkRepository,
+        vector_service: VectorService,
         embedder: DocumentEmbedder,
         minio_client: Minio,
         bucket_name: str,
@@ -41,6 +43,7 @@ class FileService:
         self._session_service = session_service
         self._file_repo = file_repo
         self._chunk_repo = chunk_repo
+        self._vector_service = vector_service
         self._embedder = embedder
         self._minio_client = minio_client
         self._bucket_name = bucket_name
@@ -116,12 +119,19 @@ class FileService:
                         "user_id": user_id,
                         "content": content,
                         "chunk_index": index,
-                        "embedding": embeddings[index],
                     }
                     for index, content in enumerate(chunks)
                 ]
             )
+            await self._vector_service.index_chunks(
+                session_id=session_id,
+                file_id=str(metadata["id"]),
+                user_id=user_id,
+                chunks=chunks,
+                embeddings=embeddings,
+            )
         except Exception as exc:  # pragma: no cover - external provider behavior
+            await self._chunk_repo.delete_by_file(str(metadata["id"]))
             await self._file_repo.delete(metadata["id"])
             self._minio_client.remove_object(self._bucket_name, object_key)
             raise ValueError("Failed to persist chunks") from exc
@@ -150,6 +160,7 @@ class FileService:
         if row is None or str(row.get("session_id")) != session_id:
             raise ValueError("File not found")
 
+        await self._vector_service.delete_file_vectors(file_id)
         await self._chunk_repo.delete_by_file(file_id)
         self._minio_client.remove_object(
             str(row.get("minio_bucket", self._bucket_name)),
