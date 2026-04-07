@@ -4,7 +4,7 @@ services:
     container_name: agent-server-mongodb
     restart: unless-stopped
     ports:
-      - "27018:27017"
+      - "27017:27017"
     volumes:
       - mongo_data:/data
     healthcheck:
@@ -13,6 +13,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - agent-net
 
   minio:
     image: minio/minio:latest
@@ -33,6 +35,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - agent-net
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -49,6 +53,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - agent-net
 
   minio-init:
     image: minio/mc:latest
@@ -62,8 +68,36 @@ services:
       mc alias set local http://minio:9000 minioadmin minioadmin &&
       mc mb --ignore-existing local/uploads
       "
+    networks:
+      - agent-net
+
+  app:
+    build: .
+    image: agent-server:latest
+    container_name: agent-server-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017
+      QDRANT_URL: http://qdrant:6333
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - agent-net
 
 volumes:
   mongo_data:
   minio_data:
   qdrant_data:
+
+networks:
+  agent-net:
+    driver: bridge
