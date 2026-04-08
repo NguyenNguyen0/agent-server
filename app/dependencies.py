@@ -19,6 +19,7 @@ from app.services.auth_service import AuthService
 from app.services.chat_service import ChatService
 from app.services.file_service import FileService
 from app.services.session_service import SessionService
+from app.services.tool_service import ToolService
 from app.services.vector_service import VectorService
 from app.storage.minio import ensure_bucket_exists, get_bucket_name, get_minio_client
 from app.utils.embeddings import get_embedder
@@ -123,13 +124,20 @@ def get_mcp_service(
     return MCPService(mcp_repo=mcp_repo)
 
 
+def get_tool_service(
+    mcp_service: MCPService = Depends(get_mcp_service),  # noqa: B008
+) -> ToolService:
+    """Build tool assembly service dependency."""
+    return ToolService(mcp_service=mcp_service)
+
+
 def get_chat_service(
     session_service: SessionService = Depends(get_session_service),  # noqa: B008
     message_repo: MessageRepository = Depends(get_message_repository),  # noqa: B008
     chatbot_agent: ChatbotAgent = Depends(get_chatbot_agent),  # noqa: B008
     rag_agent: RagAgent = Depends(get_rag_agent),  # noqa: B008
     vector_service: VectorService = Depends(get_vector_service),  # noqa: B008
-    mcp_service: MCPService = Depends(get_mcp_service),  # noqa: B008
+    tool_service: ToolService = Depends(get_tool_service),  # noqa: B008
 ) -> ChatService:
     """Build chat service dependency."""
     return ChatService(
@@ -138,7 +146,7 @@ def get_chat_service(
         chatbot_agent=chatbot_agent,
         rag_agent=rag_agent,
         vector_service=vector_service,
-        mcp_service=mcp_service,
+        tool_service=tool_service,
         llm=get_llm(streaming=True),
     )
 
