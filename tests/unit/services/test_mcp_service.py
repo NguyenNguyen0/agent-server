@@ -103,7 +103,7 @@ def _make_repo(servers: list[dict]) -> AsyncMock:
     repo.find_by_user_and_id = AsyncMock(
         return_value=servers[0] if servers else None
     )
-    repo.delete = AsyncMock()
+    repo.delete_by_id = AsyncMock()
     repo.update_active = AsyncMock(
         return_value={**servers[0], "is_active": False} if servers else None
     )
@@ -191,24 +191,24 @@ async def test_delete_server_calls_repo_delete_on_success() -> None:
 
     await service.delete_server(user_id="user-a", server_id="server-id-1")
 
-    repo.delete.assert_called_once_with("server-id-1")
+    repo.delete_by_id.assert_called_once_with("server-id-1")
 
 
 @respx.mock
 @pytest.mark.asyncio
 async def test_get_tools_for_session_skips_unreachable_server() -> None:
     """get_tools_for_servers must skip failing servers, not raise."""
-    records = [_server_record("s1"), _server_record("s2")]
+    s1_url = "http://mcp-s1.example.com/mcp"
+    s2_url = "http://mcp-s2.example.com/mcp"
+    s1 = {**_server_record("s1"), "url": s1_url}
+    s2 = {**_server_record("s2"), "url": s2_url}
+    records = [s1, s2]
     repo = _make_repo(records)
     repo.find_active_by_ids = AsyncMock(return_value=records)
 
-    # s1 → OK, s2 → error
-    respx.post("http://mcp.example.com/mcp").mock(
-        side_effect=[
-            httpx.Response(200, json=TOOLS_LIST_RESPONSE),
-            httpx.ConnectError("down"),
-        ]
-    )
+    # s1 → OK, s2 → network error
+    respx.post(s1_url).mock(return_value=httpx.Response(200, json=TOOLS_LIST_RESPONSE))
+    respx.post(s2_url).mock(side_effect=httpx.ConnectError("down"))
 
     service = MCPService(mcp_repo=repo)
     tools = await service.get_tools_for_servers(

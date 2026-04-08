@@ -35,4 +35,4 @@ class MCPServerResponse(BaseModel):
     headers: dict[str, str]
     is_active: bool
     created_at: datetime
-    tool_count: int | None = None
+    updated_at: datetime | None = None

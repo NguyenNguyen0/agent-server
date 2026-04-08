@@ -49,12 +49,16 @@ class ChatService:
         )
         if not tool_infos:
             return None
+        # Build one MCPClient per unique server URL to avoid redundant connections.
+        clients: dict[str, MCPClient] = {}
         tools = []
         for info in tool_infos:
             server_url = info["server_url"]
-            server_headers = info.get("server_headers", {})
-            mcp_client = MCPClient(url=server_url, headers=server_headers)
-            tools.append(create_mcp_tool(info, call_tool=mcp_client.call_tool))
+            if server_url not in clients:
+                clients[server_url] = MCPClient(
+                    url=server_url, headers=info.get("server_headers", {})
+                )
+            tools.append(create_mcp_tool(info, call_tool=clients[server_url].call_tool))
         return ToolAgent(llm=self._llm, tools=tools)
 
     async def _select_agent(
