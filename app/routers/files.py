@@ -18,7 +18,18 @@ from app.services.file_service import FileService
 router = APIRouter(prefix="/sessions/{session_id}", tags=["files"])
 
 
-@router.post("/files", response_model=FileResponse)
+@router.post(
+    "/files",
+    response_model=FileResponse,
+    summary="Upload file",
+    description="Upload a file (PDF, DOCX, TXT, MD, CSV, JSON) to be indexed for RAG context.",
+    responses={
+        400: {"description": "Unsupported file type or session limit reached"},
+        401: {"description": "Unauthorized"},
+        404: {"description": "Session not found"},
+        413: {"description": "File too large"},
+    },
+)
 async def upload_file(
     session_id: str,
     file: UploadFile = File(...),  # noqa: B008
@@ -33,7 +44,13 @@ async def upload_file(
     return FileResponse(**row)
 
 
-@router.get("/files", response_model=FileListResponse)
+@router.get(
+    "/files",
+    response_model=FileListResponse,
+    summary="List files",
+    description="List all files uploaded to a session.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Session not found"}},
+)
 async def list_files(
     session_id: str,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
@@ -45,7 +62,13 @@ async def list_files(
     return FileListResponse(files=items, total=len(items))
 
 
-@router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/files/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete file",
+    description="Delete a file and all associated vector chunks.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "File not found"}},
+)
 async def delete_file(
     session_id: str,
     file_id: str,

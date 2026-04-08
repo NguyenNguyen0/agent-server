@@ -14,7 +14,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp/servers", tags=["mcp"])
 
 
-@router.post("", response_model=MCPServerResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=MCPServerResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register MCP server",
+    description="Verify live connectivity then persist the MCP server configuration.",
+    responses={
+        400: {"description": "Server unreachable or connection error"},
+        401: {"description": "Unauthorized"},
+    },
+)
 async def register_server(
     payload: MCPServerCreate,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
@@ -30,7 +40,13 @@ async def register_server(
     return MCPServerResponse(**record)
 
 
-@router.get("", response_model=list[MCPServerResponse])
+@router.get(
+    "",
+    response_model=list[MCPServerResponse],
+    summary="List MCP servers",
+    description="Return all MCP servers registered by the current user.",
+    responses={401: {"description": "Unauthorized"}},
+)
 async def list_servers(
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
     service: MCPService = Depends(get_mcp_service),  # noqa: B008
@@ -40,7 +56,13 @@ async def list_servers(
     return [MCPServerResponse(**r) for r in records]
 
 
-@router.get("/{server_id}", response_model=MCPServerResponse)
+@router.get(
+    "/{server_id}",
+    response_model=MCPServerResponse,
+    summary="Get MCP server",
+    description="Return details for one MCP server owned by the current user.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Server not found"}},
+)
 async def get_server(
     server_id: str,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
@@ -51,7 +73,13 @@ async def get_server(
     return MCPServerResponse(**record)
 
 
-@router.delete("/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{server_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete MCP server",
+    description="Remove an MCP server configuration owned by the current user.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Server not found"}},
+)
 async def delete_server(
     server_id: str,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
@@ -62,7 +90,13 @@ async def delete_server(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.patch("/{server_id}/toggle", response_model=MCPServerResponse)
+@router.patch(
+    "/{server_id}/toggle",
+    response_model=MCPServerResponse,
+    summary="Toggle MCP server",
+    description="Enable or disable an MCP server. Disabled servers are skipped during tool assembly.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Server not found"}},
+)
 async def toggle_server(
     server_id: str,
     payload: MCPServerUpdate,
@@ -74,7 +108,17 @@ async def toggle_server(
     return MCPServerResponse(**record)
 
 
-@router.get("/{server_id}/tools", response_model=list[MCPToolInfo])
+@router.get(
+    "/{server_id}/tools",
+    response_model=list[MCPToolInfo],
+    summary="List tools",
+    description="Live-fetch the tool list from a registered MCP server.",
+    responses={
+        400: {"description": "Server unreachable"},
+        401: {"description": "Unauthorized"},
+        404: {"description": "Server not found"},
+    },
+)
 async def list_server_tools(
     server_id: str,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008

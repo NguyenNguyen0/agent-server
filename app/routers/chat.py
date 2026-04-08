@@ -1,9 +1,10 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_chat_service
+from app.limiter import limiter
 from app.middleware.auth import get_current_user
 from app.models.chat import ChatRequest, ChatResponse
 from app.services.chat_service import ChatService
@@ -11,8 +12,20 @@ from app.services.chat_service import ChatService
 router = APIRouter(prefix="/sessions/{session_id}", tags=["chat"])
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    summary="Invoke agent (blocking)",
+    description="Send a message to the agent and receive the full response once complete.",
+    responses={
+        401: {"description": "Missing or invalid token"},
+        404: {"description": "Session not found"},
+        429: {"description": "Rate limit exceeded"},
+    },
+)
+@limiter.limit("30/minute")
 async def invoke_chat(
+    request: Request,
     session_id: str,
     payload: ChatRequest,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
@@ -26,8 +39,22 @@ async def invoke_chat(
     )
 
 
-@router.post("/chat/stream")
+@router.post(
+    "/chat/stream",
+    summary="Invoke agent (SSE streaming)",
+    description=(
+        "Send a message and receive the response as a stream of Server-Sent Events. "
+        "Format: `data: {\"token\": \"...\"}\\n\\n`, terminated by `data: [DONE]\\n\\n`."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        404: {"description": "Session not found"},
+        429: {"description": "Rate limit exceeded"},
+    },
+)
+@limiter.limit("30/minute")
 async def stream_chat(
+    request: Request,
     session_id: str,
     payload: ChatRequest,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008

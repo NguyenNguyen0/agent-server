@@ -20,7 +20,13 @@ def _to_public_user(user: dict[str, Any]) -> UserResponse:
     )
 
 
-@router.get("/users", response_model=UserListResponse)
+@router.get(
+    "/users",
+    response_model=UserListResponse,
+    summary="List users",
+    description="Return all registered users. Requires authentication.",
+    responses={401: {"description": "Unauthorized"}},
+)
 async def list_users(
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
     service: AuthService = Depends(get_auth_service),  # noqa: B008
@@ -32,7 +38,13 @@ async def list_users(
     return UserListResponse(users=public_users, total=len(public_users))
 
 
-@router.get("/users/{user_id}", response_model=UserResponse)
+@router.get(
+    "/users/{user_id}",
+    response_model=UserResponse,
+    summary="Get user by ID",
+    description="Return a single user by their ID.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "User not found"}},
+)
 async def get_user_by_id(
     user_id: str,
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
@@ -46,7 +58,13 @@ async def get_user_by_id(
     return _to_public_user(user)
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="Get current user",
+    description="Return the currently authenticated user's profile.",
+    responses={401: {"description": "Unauthorized"}},
+)
 async def get_me(
     current_user: dict[str, Any] = Depends(get_current_user),  # noqa: B008
 ) -> UserResponse:

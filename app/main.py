@@ -4,12 +4,26 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.db.mongo import close_client, get_client
 from app.db.qdrant import close_client as close_qdrant_client
 from app.db.qdrant import get_client as get_qdrant_client
-from app.exceptions import AuthError, LLMRateLimitError, MCPConnectionError, MCPServerNotFoundError, SessionNotFoundError
+from app.exceptions import (
+    AgentError,
+    AuthError,
+    DocumentNotFoundError,
+    LLMRateLimitError,
+    MCPConnectionError,
+    MCPServerNotFoundError,
+    SessionNotFoundError,
+    VectorSearchError,
+)
+from app.limiter import limiter
+from app.logging_config import setup_logging
+from app.middleware.request_id import RequestIDMiddleware
 from app.routers.auth import router as auth_router
 from app.routers.chat import router as chat_router
 from app.routers.files import router as files_router
@@ -17,6 +31,9 @@ from app.routers.health import router as health_router
 from app.routers.mcp import router as mcp_router
 from app.routers.sessions import router as sessions_router
 from app.routers.users import router as users_router
+
+setup_logging(settings.log_level)
+
 
 
 @asynccontextmanager
@@ -33,8 +50,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await close_qdrant_client()
 
 
-app = FastAPI(title="agent-server", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="agent-server",
+    version="0.1.0",
+    lifespan=lifespan,
+    description="LangGraph-powered AI agent server with RAG, MCP tools, and web search.",
+)
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -95,3 +121,29 @@ async def mcp_not_found_handler(
 ) -> JSONResponse:
     """Map MCPServerNotFoundError to HTTP 404."""
     return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(DocumentNotFoundError)
+async def document_not_found_handler(
+    request: Request,
+    exc: DocumentNotFoundError,
+) -> JSONResponse:
+    """Map DocumentNotFoundError to HTTP 404."""
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(VectorSearchError)
+async def vector_search_error_handler(
+    request: Request,
+    exc: VectorSearchError,
+) -> JSONResponse:
+    """Map VectorSearchError to HTTP 502."""
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+
+@app.exception_handler(AgentError)
+async def agent_error_handler(request: Request, exc: AgentError) -> JSONResponse:
+    """Map AgentError to HTTP 500."""
+    return JSONResponse(
+        status_code=500, content={"detail": "Agent execution failed"}
+    )

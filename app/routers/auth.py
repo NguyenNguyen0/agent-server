@@ -12,6 +12,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
     "/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Register a new user",
+    description="Create a new user account with email and password.",
+    responses={
+        201: {"description": "User created successfully"},
+        400: {"description": "Email already registered or invalid input"},
+    },
 )
 async def register(
     payload: RegisterRequest,
@@ -29,7 +35,16 @@ async def register(
     return UserResponse(**user)
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Login",
+    description="Authenticate with email and password, returns a JWT Bearer token.",
+    responses={
+        200: {"description": "JWT access token"},
+        401: {"description": "Invalid credentials"},
+    },
+)
 async def login(
     payload: LoginRequest,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
