@@ -6,6 +6,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.chatbot_agent import ChatbotAgent
 from app.agents.rag_agent import RagAgent
 from app.db.mongo import get_db
+from app.repositories.mcp_repo import MCPRepository
+from app.services.mcp_service import MCPService
 from app.db.qdrant import get_client as get_qdrant_client
 from app.repositories.chunk_repo import ChunkRepository
 from app.repositories.file_repo import FileRepository
@@ -107,12 +109,27 @@ def get_session_service(
     return SessionService(session_repo=session_repo, message_repo=message_repo)
 
 
+def get_mcp_repository(
+    db: AsyncIOMotorDatabase[dict[str, Any]] = Depends(get_database),  # noqa: B008
+) -> MCPRepository:
+    """Build MCP server repository dependency."""
+    return MCPRepository(collection=db["mcp_servers"])
+
+
+def get_mcp_service(
+    mcp_repo: MCPRepository = Depends(get_mcp_repository),  # noqa: B008
+) -> MCPService:
+    """Build MCP service dependency."""
+    return MCPService(mcp_repo=mcp_repo)
+
+
 def get_chat_service(
     session_service: SessionService = Depends(get_session_service),  # noqa: B008
     message_repo: MessageRepository = Depends(get_message_repository),  # noqa: B008
     chatbot_agent: ChatbotAgent = Depends(get_chatbot_agent),  # noqa: B008
     rag_agent: RagAgent = Depends(get_rag_agent),  # noqa: B008
     vector_service: VectorService = Depends(get_vector_service),  # noqa: B008
+    mcp_service: MCPService = Depends(get_mcp_service),  # noqa: B008
 ) -> ChatService:
     """Build chat service dependency."""
     return ChatService(
@@ -121,6 +138,8 @@ def get_chat_service(
         chatbot_agent=chatbot_agent,
         rag_agent=rag_agent,
         vector_service=vector_service,
+        mcp_service=mcp_service,
+        llm=get_llm(streaming=True),
     )
 
 

@@ -9,11 +9,12 @@ from app.config import settings
 from app.db.mongo import close_client, get_client
 from app.db.qdrant import close_client as close_qdrant_client
 from app.db.qdrant import get_client as get_qdrant_client
-from app.exceptions import AuthError, LLMRateLimitError, SessionNotFoundError
+from app.exceptions import AuthError, LLMRateLimitError, MCPConnectionError, MCPServerNotFoundError, SessionNotFoundError
 from app.routers.auth import router as auth_router
 from app.routers.chat import router as chat_router
 from app.routers.files import router as files_router
 from app.routers.health import router as health_router
+from app.routers.mcp import router as mcp_router
 from app.routers.sessions import router as sessions_router
 from app.routers.users import router as users_router
 
@@ -48,6 +49,7 @@ app.include_router(sessions_router)
 app.include_router(chat_router)
 app.include_router(files_router)
 app.include_router(users_router)
+app.include_router(mcp_router)
 
 
 @app.exception_handler(SessionNotFoundError)
@@ -75,3 +77,21 @@ async def rate_limit_handler(
 async def auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
     """Map AuthError to HTTP 401."""
     return JSONResponse(status_code=401, content={"detail": str(exc)})
+
+
+@app.exception_handler(MCPConnectionError)
+async def mcp_connection_error_handler(
+    request: Request,
+    exc: MCPConnectionError,
+) -> JSONResponse:
+    """Map MCPConnectionError to HTTP 400."""
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(MCPServerNotFoundError)
+async def mcp_not_found_handler(
+    request: Request,
+    exc: MCPServerNotFoundError,
+) -> JSONResponse:
+    """Map MCPServerNotFoundError to HTTP 404."""
+    return JSONResponse(status_code=404, content={"detail": str(exc)})

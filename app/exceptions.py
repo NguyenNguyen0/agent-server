@@ -24,3 +24,11 @@ class DocumentNotFoundError(AgentServerError):
 
 class AuthError(AgentServerError):
     """Raised for authentication and authorization failures."""
+
+
+class MCPConnectionError(AgentServerError):
+    """Raised when an MCP server cannot be reached or returns an error."""
+
+
+class MCPServerNotFoundError(AgentServerError):
+    """Raised when an MCP server record cannot be found."""

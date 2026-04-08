@@ -4,13 +4,17 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_groq import ChatGroq
 
 from app.agents.chatbot_agent import ChatbotAgent
 from app.agents.rag_agent import RagAgent
+from app.agents.tool_agent import ToolAgent
 from app.models.chat import ChatInput, ChatRequest, ChatResponse
 from app.repositories.message_repo import MessageRepository
+from app.services.mcp_service import MCPClient, MCPService
 from app.services.session_service import SessionService
 from app.services.vector_service import VectorService
+from app.tools.mcp_tool import create_mcp_tool
 
 
 class ChatService:
@@ -23,15 +27,53 @@ class ChatService:
         chatbot_agent: ChatbotAgent,
         rag_agent: RagAgent,
         vector_service: VectorService,
+        mcp_service: MCPService | None = None,
+        llm: ChatGroq | None = None,
     ) -> None:
         self._session_service = session_service
         self._message_repo = message_repo
         self._chatbot_agent = chatbot_agent
         self._rag_agent = rag_agent
         self._vector_service = vector_service
+        self._mcp_service = mcp_service
+        self._llm = llm
 
-    async def _select_agent(self, session_id: str) -> ChatbotAgent | RagAgent:
-        """Select RAG agent when session has uploaded file context."""
+    async def _build_tool_agent(
+        self, user_id: str, mcp_server_ids: list[str]
+    ) -> ToolAgent | None:
+        """Build a ToolAgent from the requested MCP server ids."""
+        if not self._mcp_service or not self._llm or not mcp_server_ids:
+            return None
+        tool_infos = await self._mcp_service.get_tools_for_servers(
+            user_id, mcp_server_ids
+        )
+        if not tool_infos:
+            return None
+        tools = []
+        for info in tool_infos:
+            server_url = info["server_url"]
+            server_headers = info.get("server_headers", {})
+            mcp_client = MCPClient(url=server_url, headers=server_headers)
+            tools.append(create_mcp_tool(info, call_tool=mcp_client.call_tool))
+        return ToolAgent(llm=self._llm, tools=tools)
+
+    async def _select_agent(
+        self,
+        user_id: str,
+        session_id: str,
+        mcp_server_ids: list[str],
+    ) -> ChatbotAgent | RagAgent | ToolAgent:
+        """
+        Agent selection priority:
+        1. MCP server ids provided → ToolAgent
+        2. Session has file context → RagAgent
+        3. Fallback → ChatbotAgent
+        """
+        if mcp_server_ids:
+            tool_agent = await self._build_tool_agent(user_id, mcp_server_ids)
+            if tool_agent:
+                return tool_agent
+
         has_context = await self._vector_service.has_context(session_id)
         return self._rag_agent if has_context else self._chatbot_agent
 
@@ -58,7 +100,7 @@ class ChatService:
 
         rows = await self._message_repo.find_by_session(session_id)
         history = self._to_langchain_history(rows)
-        agent = await self._select_agent(session_id)
+        agent = await self._select_agent(user_id, session_id, request.mcp_server_ids)
 
         await self._message_repo.create_message(
             session_id,
@@ -93,7 +135,7 @@ class ChatService:
 
         rows = await self._message_repo.find_by_session(session_id)
         history = self._to_langchain_history(rows)
-        agent = await self._select_agent(session_id)
+        agent = await self._select_agent(user_id, session_id, request.mcp_server_ids)
 
         await self._message_repo.create_message(
             session_id,

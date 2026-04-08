@@ -152,3 +152,102 @@ async def test_chat_uses_rag_agent_when_context_exists() -> None:
     assert response.content == "rag reply"
     rag_agent.ainvoke.assert_awaited_once()
     chatbot_agent.ainvoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_uses_tool_agent_when_mcp_server_ids_provided() -> None:
+    """When mcp_server_ids is non-empty a ToolAgent should be built and used."""
+    from unittest.mock import MagicMock, patch
+
+    session_service = AsyncMock()
+    message_repo = AsyncMock()
+    message_repo.find_by_session.return_value = []
+    message_repo.create_message.side_effect = [{"id": "m-user"}, {"id": "m-asst"}]
+
+    chatbot_agent = AsyncMock()
+    rag_agent = AsyncMock()
+    vector_service = AsyncMock(has_context=AsyncMock(return_value=False))
+
+    mcp_service = AsyncMock()
+    mcp_service.get_tools_for_servers.return_value = [
+        {
+            "name": "search",
+            "description": "web search",
+            "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            "server_id": "s1",
+            "server_url": "http://mcp.example.com/mcp",
+            "server_headers": {},
+        }
+    ]
+
+    llm_mock = MagicMock()
+
+    fake_tool_agent = AsyncMock()
+    fake_tool_agent.ainvoke.return_value = ChatOutput(
+        content="tool reply",
+        session_id="session-1",
+        message_id="",
+        agent_type="tool",
+    )
+
+    with patch("app.services.chat_service.ToolAgent", return_value=fake_tool_agent):
+        service = ChatService(
+            session_service=session_service,
+            message_repo=message_repo,
+            chatbot_agent=chatbot_agent,
+            rag_agent=rag_agent,
+            vector_service=vector_service,
+            mcp_service=mcp_service,
+            llm=llm_mock,
+        )
+
+        response = await service.chat(
+            user_id="user-1",
+            session_id="session-1",
+            request=ChatRequest(message="hello", mcp_server_ids=["s1"]),
+        )
+
+    assert response.content == "tool reply"
+    chatbot_agent.ainvoke.assert_not_called()
+    rag_agent.ainvoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_falls_back_to_rag_when_mcp_ids_given_but_no_tools() -> None:
+    """If the MCP service returns no tools, fall back to the normal agent selection."""
+    session_service = AsyncMock()
+    message_repo = AsyncMock()
+    message_repo.find_by_session.return_value = []
+    message_repo.create_message.side_effect = [{"id": "m-user"}, {"id": "m-asst"}]
+
+    rag_agent = AsyncMock()
+    rag_agent.ainvoke.return_value = ChatOutput(
+        content="rag reply",
+        session_id="session-1",
+        message_id="",
+        agent_type="rag",
+    )
+    vector_service = AsyncMock(has_context=AsyncMock(return_value=True))
+
+    mcp_service = AsyncMock()
+    mcp_service.get_tools_for_servers.return_value = []  # empty → no ToolAgent
+
+    from unittest.mock import MagicMock
+    service = ChatService(
+        session_service=session_service,
+        message_repo=message_repo,
+        chatbot_agent=AsyncMock(),
+        rag_agent=rag_agent,
+        vector_service=vector_service,
+        mcp_service=mcp_service,
+        llm=MagicMock(),
+    )
+
+    response = await service.chat(
+        user_id="user-1",
+        session_id="session-1",
+        request=ChatRequest(message="hello", mcp_server_ids=["s1"]),
+    )
+
+    assert response.content == "rag reply"
+    rag_agent.ainvoke.assert_awaited_once()

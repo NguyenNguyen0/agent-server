@@ -1,27 +1,33 @@
+"""Tool-calling agent backed by LangGraph ReAct graph."""
 import inspect
 from collections.abc import AsyncIterator
 from typing import Any
 
 from langchain_core.messages import AIMessageChunk, HumanMessage
+from langchain_core.tools import BaseTool
 from langchain_groq import ChatGroq
 
-from app.graphs.chatbot_graph import build_chatbot_graph
+from app.graphs.tool_graph import build_tool_graph
 from app.models.chat import ChatInput, ChatOutput
 
 
-class ChatbotAgent:
-    """Conversational chatbot backed by LangGraph and ChatGroq."""
+class ToolAgent:
+    """
+    ReAct agent that has access to one or more LangChain tools.
 
-    def __init__(self, llm: ChatGroq) -> None:
+    A fresh graph is built per-request (via the factory) so that each call
+    receives the correct tool set without cross-request contamination.
+    """
+
+    def __init__(self, llm: ChatGroq, tools: list[BaseTool]) -> None:
         self._llm = llm
-        self._graph = build_chatbot_graph(llm)
+        self._graph = build_tool_graph(llm, tools)
 
     def _build_run_config(self, session_id: str) -> dict[str, dict[str, str]]:
-        """Build per-session LangGraph runtime config."""
         return {"configurable": {"thread_id": session_id}}
 
     async def ainvoke(self, input: ChatInput) -> ChatOutput:
-        """Run full chatbot turn and return the final assistant message."""
+        """Run a full ReAct turn and return the final assistant message."""
         messages: list[Any] = [*input.history, HumanMessage(content=input.message)]
         result = await self._graph.ainvoke(
             {"messages": messages},
@@ -32,19 +38,23 @@ class ChatbotAgent:
             content=content,
             session_id=input.session_id,
             message_id="",
-            agent_type="chatbot",
+            agent_type="tool",
         )
 
     async def astream(self, input: ChatInput) -> AsyncIterator[str]:
-        """Stream assistant response as token chunks."""
+        """Stream assistant response tokens from the ReAct graph."""
         messages: list[Any] = [*input.history, HumanMessage(content=input.message)]
-        stream = self._llm.astream(messages)
+        stream = self._graph.astream(
+            {"messages": messages},
+            config=self._build_run_config(input.session_id),
+            stream_mode="values",
+        )
         if inspect.isawaitable(stream):
             stream = await stream
-        async for chunk in stream:  # ty:ignore[not-iterable]
-            if isinstance(chunk, AIMessageChunk) and chunk.content:
-                yield str(chunk.content)
+        async for chunk in stream:  # type: ignore[union-attr]
+            last = chunk.get("messages", [])
+            if not last:
                 continue
-            text = getattr(chunk, "content", "")
-            if text:
-                yield str(text)
+            msg = last[-1]
+            if isinstance(msg, AIMessageChunk) and msg.content:
+                yield str(msg.content)
